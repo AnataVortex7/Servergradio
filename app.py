@@ -329,4 +329,5 @@ if __name__ == "__main__":
     threading.Thread(target=launch_setupbot_background, daemon=True).start()
 
     # Launch Gradio
-    demo.launch(theme=gr.themes.Soft(), css=custom_css, ssr_mode=False)
+    #  demo.launch(theme=gr.themes.Soft(), css=custom_css, ssr_mode=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft(), css=custom_css, ssr_mode=False)
