@@ -1,10 +1,4 @@
 gradio
 spaces
-torch
-transformers
-diffusers
-accelerate
 huggingface_hub
-Pillow
 smolagents
-duckduckgo-search
