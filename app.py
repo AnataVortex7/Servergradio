@@ -27,7 +27,6 @@ os.makedirs(FILES_DIR, exist_ok=True)
 
 import gradio as gr
 import spaces
-import torch
 from smolagents import CodeAgent, InferenceClientModel, tool
 from huggingface_hub import InferenceClient
 
