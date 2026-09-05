@@ -14,16 +14,22 @@ IS_SPACES = os.environ.get("SPACE_ID") is not None
 
 if IS_SPACES:
     DATA_DIR = "/data/workspace_data"
+    HIDDEN_DIR = "/data/.hidden_data"
+    PUBLIC_DIR = "/data/public_data"
     os.environ["HF_HOME"] = "/data/models_cache"
 else:
     DATA_DIR = "./local_workspace_data"
+    HIDDEN_DIR = "./.hidden_data"
+    PUBLIC_DIR = "./public_data"
 
-IMAGE_DIR = os.path.join(DATA_DIR, "saved_images")
-FILES_DIR = os.path.join(DATA_DIR, "downloads")
-CHAT_LOG_FILE = os.path.join(DATA_DIR, "chat_history.txt")
+IMAGE_DIR = os.path.join(HIDDEN_DIR, "saved_images")
+FILES_DIR = os.path.join(HIDDEN_DIR, "downloads")
+CHAT_LOG_FILE = os.path.join(HIDDEN_DIR, "chat_history.txt")
 
 os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(FILES_DIR, exist_ok=True)
+os.makedirs(PUBLIC_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 import gradio as gr
 import spaces
@@ -177,11 +183,8 @@ def chat_with_true_agent(message, history, secret_key="", hf_token="", build_rep
 IMAGE_MODEL_ID = "black-forest-labs/FLUX.1-schnell"
 
 def get_saved_images():
-    if not os.path.exists(IMAGE_DIR): return []
-    valid_exts = (".png", ".jpg", ".jpeg")
-    images = [os.path.join(IMAGE_DIR, f) for f in os.listdir(IMAGE_DIR) if f.lower().endswith(valid_exts)]
-    images.sort(key=os.path.getmtime, reverse=True)
-    return images
+    # Returning empty list to keep generated images strictly private from the public web UI
+    return []
 
 def generate_media(prompt):
     try:
@@ -202,7 +205,7 @@ def generate_media(prompt):
 # =========================================================================
 def list_files():
     all_files = []
-    for root, dirs, files in os.walk(DATA_DIR):
+    for root, dirs, files in os.walk(PUBLIC_DIR):
         for file in files:
             all_files.append(os.path.join(root, file))
     return all_files
