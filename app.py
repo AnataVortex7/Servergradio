@@ -257,10 +257,103 @@ def launch_setupbot_background():
         try:
             subprocess.Popen([sys.executable, target_script, "--foreground"], env=env)
             print("[Setupbot] Bot process started successfully!")
+            
+            # Create a helper script for the user to securely update and restart setupbot
+            update_script = "update_bot.sh"
+            with open(update_script, "w") as f:
+                f.write("#!/bin/bash\n")
+                f.write("cat << 'EOF' > /tmp/do_update.sh\n")
+                f.write("#!/bin/bash\n")
+                f.write("sleep 2\n")
+                f.write("pkill -f setupbot.py\n")
+                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\n")
+                f.write(f"export TELEGRAM_BOT_TOKEN='{bot_token}'\n")
+                f.write(f"export TELEGRAM_ALLOWED_USER_ID='{env['TELEGRAM_ALLOWED_USER_ID']}'\n")
+                f.write("export IS_DOCKER='1'\n")
+                f.write(f"nohup {sys.executable} {target_script} --foreground > setupbot.log 2>&1 &\n")
+                f.write("EOF\n")
+                f.write("chmod +x /tmp/do_update.sh\n")
+                f.write("nohup /tmp/do_update.sh > /dev/null 2>&1 &\n")
+                f.write("echo 'Update initiated. The bot will refresh and restart in 2 seconds...'\n")
+            import stat
+            os.chmod(update_script, stat.S_IRWXU)
+            print(f"[Setupbot] Created update script: ./{update_script}")
+            
         except Exception as e:
             print(f"[Setupbot] Launch error: {e}")
     else:
         print(f"[Setupbot] Could not find {target_script} to launch.")
+
+# =========================================================================
+# 4.5. Background Tailscale Runner
+# =========================================================================
+def launch_tailscale_background():
+    print("[Tailscale] Initializing Tailscale environment...")
+    try:
+        import urllib.request
+        import tarfile
+        import stat
+
+        tailscale_dir = os.path.join(DATA_DIR, "tailscale")
+        os.makedirs(tailscale_dir, exist_ok=True)
+        
+        tailscaled_path = os.path.join(tailscale_dir, "tailscaled")
+        tailscale_path = os.path.join(tailscale_dir, "tailscale")
+        
+        if not os.path.exists(tailscaled_path):
+            print("[Tailscale] Downloading Tailscale static binaries...")
+            url = "https://pkgs.tailscale.com/stable/tailscale_1.74.0_amd64.tgz"
+            tgz_path = os.path.join(tailscale_dir, "tailscale.tgz")
+            urllib.request.urlretrieve(url, tgz_path)
+            with tarfile.open(tgz_path, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.name.endswith("/tailscaled"):
+                        member.name = os.path.basename(member.name)
+                        tar.extract(member, path=tailscale_dir)
+                    elif member.name.endswith("/tailscale") and not member.name.endswith("tailscaled"):
+                        member.name = os.path.basename(member.name)
+                        tar.extract(member, path=tailscale_dir)
+            
+            if os.path.exists(tailscaled_path):
+                os.chmod(tailscaled_path, stat.S_IRWXU)
+            if os.path.exists(tailscale_path):
+                os.chmod(tailscale_path, stat.S_IRWXU)
+            
+        state_file = os.path.join(tailscale_dir, "tailscaled.state")
+        sock_file = os.path.join(tailscale_dir, "tailscaled.sock")
+        
+        # Create a helper script for the user to connect manually via Telegram Bot terminal
+        helper_script = "connect_tailnet.sh"
+        with open(helper_script, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write('if [ -z "$1" ]; then\n')
+            f.write('  echo "Usage: ./connect_tailnet.sh <tailscale-auth-key>"\n')
+            f.write('  exit 1\n')
+            f.write('fi\n')
+            f.write(f'{tailscale_path} --socket={sock_file} up --authkey=$1 --hostname=gradio-server\n')
+            f.write('echo "Tailscale is now connected!"\n')
+        os.chmod(helper_script, stat.S_IRWXU)
+
+        print("[Tailscale] Starting tailscaled daemon in userspace mode...")
+        # Start daemon
+        subprocess.Popen([
+            tailscaled_path, 
+            "--tun=userspace-networking",
+            f"--state={state_file}",
+            f"--socket={sock_file}"
+        ])
+        
+        time.sleep(3) # Wait for daemon to start
+        
+        authkey = os.environ.get("TAILSCALE_AUTHKEY", "").strip()
+        if authkey:
+            print("[Tailscale] Auth key found in env. Authenticating with Tailnet...")
+            subprocess.run(["./connect_tailnet.sh", authkey])
+        else:
+            print("[Tailscale] No Auth key found in env. Tailscale daemon is running idle.")
+            print("[Tailscale] You can connect later via bot terminal by running: ./connect_tailnet.sh <your-auth-key>")
+    except Exception as e:
+        print(f"[Tailscale] Error setting up Tailscale: {e}")
 
 # =========================================================================
 # 5. Gradio UI Interface
@@ -327,6 +420,9 @@ with gr.Blocks() as demo:
 if __name__ == "__main__":
     # Launch setupbot in background thread
     threading.Thread(target=launch_setupbot_background, daemon=True).start()
+    
+    # Launch tailscale in background thread
+    threading.Thread(target=launch_tailscale_background, daemon=True).start()
 
     # Launch Gradio
     #  demo.launch(theme=gr.themes.Soft(), css=custom_css, ssr_mode=False)
