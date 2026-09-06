@@ -239,13 +239,35 @@ def launch_setupbot_background():
     # Download latest setupbot.py from Gist
     try:
         import urllib.request
+        import base64
+        import re
         req = urllib.request.Request(SETUPBOT_GIST_URL, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=20) as r:
-            code = r.read()
+            code = r.read().decode('utf-8')
+            
         if code and len(code) > 1000:
-            with open(target_script, "wb") as f:
+            # Patch the base64 encoded bot code to use root directory (/)
+            match = re.search(r'BOT_CODE_B64 = b"([^"]+)"', code)
+            if match:
+                b64_str = match.group(1)
+                decoded_bot = base64.b64decode(b64_str).decode('utf-8')
+                
+                # Replace the workspace variables to root
+                decoded_bot = decoded_bot.replace('WORKSPACE = "/data/workspace"', 'WORKSPACE = "/"')
+                decoded_bot = decoded_bot.replace('WORKSPACE = os.path.expanduser("~/workspace")', 'WORKSPACE = "/"')
+                
+                # Fix hardcoded /root/ paths for backup and restore
+                decoded_bot = decoded_bot.replace('"/root/backup_part_*"', 'os.path.join(WORKSPACE, "backup_part_*")')
+                decoded_bot = decoded_bot.replace('in /root!', 'in WORKSPACE!')
+                decoded_bot = decoded_bot.replace('"/root/workspace"', 'WORKSPACE')
+                
+                # Encode back to base64
+                new_b64 = base64.b64encode(decoded_bot.encode('utf-8')).decode('utf-8')
+                code = code.replace(b64_str, new_b64)
+
+            with open(target_script, "w", encoding="utf-8") as f:
                 f.write(code)
-            print(f"[Setupbot] Successfully synced setupbot.py from Gist to {target_script}")
+            print(f"[Setupbot] Successfully synced and patched setupbot.py from Gist to {target_script}")
     except Exception as e:
         print(f"[Setupbot] Gist fetch note: {e}")
 
@@ -364,6 +386,29 @@ def launch_tailscale_background():
 # =========================================================================
 custom_css = "#component-0 { max-width: 1100px; margin: auto; }"
 
+def force_update_bot():
+    import os, signal, subprocess, threading
+    try:
+        # Try multiple ways to kill old bots
+        os.system("pkill -9 -f telegram_bot.py 2>/dev/null || true")
+        os.system("pkill -9 -f setupbot.py 2>/dev/null || true")
+        
+        try:
+            cmd = "ps aux | grep -E 'setupbot\.py|telegram_bot\.py' | grep -v grep | awk '{print $2}'"
+            pids = subprocess.check_output(cmd, shell=True).decode().split()
+            for pid in pids:
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except:
+                    pass
+        except:
+            pass
+            
+        threading.Thread(target=launch_setupbot_background, daemon=True).start()
+        return "✅ Bot fully killed, updating from Gist, and restarting..."
+    except Exception as e:
+        return f"❌ Error: {e}"
+
 with gr.Blocks() as demo:
     gr.Markdown("<h1 style='text-align: center;'>🚀 AI Assistant & Autonomous Agent</h1>")
     
@@ -375,12 +420,16 @@ with gr.Blocks() as demo:
                     secret_box = gr.Textbox(label="User ID", type="password", placeholder="Enter ID...")
                     hf_token_box = gr.Textbox(label="Access Token", type="password", placeholder="Optional HF token...")
                     repo_id_box = gr.Textbox(label="Workspace ID", placeholder="Optional workspace repo...")
+                with gr.Row():
+                    update_bot_btn = gr.Button("🔄 Force Update & Restart Telegram Bot", variant="primary")
+                    update_bot_status = gr.Textbox(label="Update Status", interactive=False)
             
             chat_interface = gr.ChatInterface(
                 fn=chat_with_true_agent, 
                 chatbot=gr.Chatbot(height=450),
                 additional_inputs=[secret_box, hf_token_box, repo_id_box]
             )
+            update_bot_btn.click(fn=force_update_bot, inputs=[], outputs=[update_bot_status])
             
         # Tab 2: Media Creation
         with gr.TabItem("🎨 AI Media Creator"):
