@@ -252,14 +252,29 @@ def launch_setupbot_background():
                 b64_str = match.group(1)
                 decoded_bot = base64.b64decode(b64_str).decode('utf-8')
                 
-                # Replace the workspace variables to root
+                # Make WORKSPACE point to / so bot can access /app and /data
                 decoded_bot = decoded_bot.replace('WORKSPACE = "/data/workspace"', 'WORKSPACE = "/"')
                 decoded_bot = decoded_bot.replace('WORKSPACE = os.path.expanduser("~/workspace")', 'WORKSPACE = "/"')
                 
-                # Fix hardcoded /root/ paths for backup and restore
-                decoded_bot = decoded_bot.replace('"/root/backup_part_*"', 'os.path.join(WORKSPACE, "backup_part_*")')
-                decoded_bot = decoded_bot.replace('in /root!', 'in WORKSPACE!')
-                decoded_bot = decoded_bot.replace('"/root/workspace"', 'WORKSPACE')
+                # Fix backup and restore paths to work with WORKSPACE=/
+                # Since handle_file saves to WORKSPACE (which is now /), backup parts are at /backup_part_*
+                # We need to replace the Gist's hardcoded ~/workspace paths with /
+                
+                # 1. Fix restore looking for ~/workspace/backup_part_*
+                decoded_bot = decoded_bot.replace('os.path.expanduser("~/workspace/backup_part_*")', '"/backup_part_*"')
+                decoded_bot = decoded_bot.replace('~/workspace/backup_part_*', '/backup_part_*')
+                
+                # 2. Fix the error message
+                decoded_bot = decoded_bot.replace('found! Forward them', 'found in /! Forward them')
+                
+                # 3. For backup, instead of backing up everything in ~, let's backup /app and /data
+                # The Gist has: ws = os.path.join(home, "workspace") and cli = ...
+                # Let's replace the tar command directly to backup /app and /data
+                decoded_bot = re.sub(
+                    r'subprocess\.run\(\["tar", "-czf", "/tmp/backup_full\.tar\.gz", ws, cli\], check=True\)',
+                    'subprocess.run(["tar", "-czf", "/tmp/backup_full.tar.gz", "/app", "/data"], check=True)',
+                    decoded_bot
+                )
                 
                 # Encode back to base64
                 new_b64 = base64.b64encode(decoded_bot.encode('utf-8')).decode('utf-8')
@@ -292,7 +307,7 @@ def launch_setupbot_background():
                 f.write("#!/bin/bash\n")
                 f.write("sleep 2\n")
                 f.write("pkill -f setupbot.py\n")
-                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\\n")
+                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\n")
                 f.write(f"export TELEGRAM_BOT_TOKEN='{bot_token}'\n")
                 f.write(f"export TELEGRAM_ALLOWED_USER_ID='{env['TELEGRAM_ALLOWED_USER_ID']}'\n")
                 f.write("export IS_DOCKER='1'\n")
