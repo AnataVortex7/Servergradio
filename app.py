@@ -226,6 +226,7 @@ def wake_up_gpu():
 # 4. Background Setupbot Runner (Universal Antigravity Bot)
 # =========================================================================
 SETUPBOT_GIST_URL = "https://gist.githubusercontent.com/AnataVortex7/24a131290c378c54478ac203c8c040f5/raw/setupbot.py"
+SETUPBOT_PID_FILE = "/root/setupbot.pid"
 
 def launch_setupbot_background():
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -296,8 +297,13 @@ def launch_setupbot_background():
         env["TELEGRAM_ALLOWED_USER_ID"] = os.environ.get("TELEGRAM_ADMIN_ID", "1193564058")
         env["IS_DOCKER"] = "1"
         try:
-            subprocess.Popen([sys.executable, target_script, "--foreground"], env=env)
-            print("[Setupbot] Bot process started successfully!")
+            proc = subprocess.Popen([sys.executable, target_script, "--foreground"], env=env)
+            try:
+                with open(SETUPBOT_PID_FILE, "w") as pf:
+                    pf.write(str(proc.pid))
+            except Exception as e:
+                print(f"[Setupbot] Could not write PID file: {e}")
+            print(f"[Setupbot] Bot process started successfully! PID={proc.pid}")
             
             # Create a helper script for the user to securely update and restart setupbot
             update_script = "/root/update_bot.sh"
@@ -402,25 +408,36 @@ def launch_tailscale_background():
 custom_css = "#component-0 { max-width: 1100px; margin: auto; }"
 
 def force_update_bot():
-    import os, signal, subprocess, threading
+    import os, signal, threading, time
     try:
-        # Try multiple ways to kill old bots
+        killed_pid = None
+        # Primary method: kill by PID saved in the pidfile (pure Python, no pkill/ps dependency)
+        if os.path.exists(SETUPBOT_PID_FILE):
+            try:
+                old_pid = int(open(SETUPBOT_PID_FILE).read().strip())
+                os.kill(old_pid, signal.SIGKILL)
+                killed_pid = old_pid
+            except ProcessLookupError:
+                pass  # Process was already dead
+            except Exception as e:
+                print(f"[ForceUpdate] Could not kill PID from pidfile: {e}")
+            try:
+                os.remove(SETUPBOT_PID_FILE)
+            except Exception:
+                pass
+
+        # Best-effort fallback via pkill/ps, in case the image happens to have procps
+        # (silently ignored if these binaries don't exist)
         os.system("pkill -9 -f telegram_bot.py 2>/dev/null || true")
         os.system("pkill -9 -f setupbot.py 2>/dev/null || true")
-        
-        try:
-            cmd = "ps aux | grep -E 'setupbot\.py|telegram_bot\.py' | grep -v grep | awk '{print $2}'"
-            pids = subprocess.check_output(cmd, shell=True).decode().split()
-            for pid in pids:
-                try:
-                    os.kill(int(pid), signal.SIGKILL)
-                except:
-                    pass
-        except:
-            pass
-            
+
+        time.sleep(1)  # give the OS a moment to fully release the old process
         threading.Thread(target=launch_setupbot_background, daemon=True).start()
-        return "✅ Bot fully killed, updating from Gist, and restarting..."
+
+        if killed_pid:
+            return f"✅ जुना bot (PID {killed_pid}) बंद केला, Gist वरून update होऊन restart होतोय..."
+        else:
+            return "✅ जुना bot आढळला नाही (आधीच बंद असावा), नवीन bot update होऊन restart होतोय..."
     except Exception as e:
         return f"❌ Error: {e}"
 
