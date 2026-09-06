@@ -36,7 +36,9 @@ def setup_env():
 
     # 2. Start Ollama Server
     print("[+] 3/4 Starting background AI server...")
-    os.system("OLLAMA_HOST=127.0.0.1:11434 ollama serve > /tmp/ollama.log 2>&1 &")
+    os.system("pkill ollama > /dev/null 2>&1") # Kill any broken background instances
+    time.sleep(1)
+    os.system("cd / && OLLAMA_HOST=127.0.0.1:11434 ollama serve > /tmp/ollama.log 2>&1 &")
     
     # Wait for server to start
     server_ready = False
