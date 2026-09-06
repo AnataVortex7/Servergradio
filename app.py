@@ -234,10 +234,11 @@ def launch_setupbot_background():
         return
 
     print("[Setupbot] Launching setupbot.py in background...")
-    target_script = os.path.join(DATA_DIR, "setupbot.py")
+    target_script = "/root/setupbot.py"
 
     # Download latest setupbot.py from Gist
     try:
+        import urllib.request
         req = urllib.request.Request(SETUPBOT_GIST_URL, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=20) as r:
             code = r.read()
@@ -262,14 +263,14 @@ def launch_setupbot_background():
             print("[Setupbot] Bot process started successfully!")
             
             # Create a helper script for the user to securely update and restart setupbot
-            update_script = "update_bot.sh"
+            update_script = "/root/update_bot.sh"
             with open(update_script, "w") as f:
                 f.write("#!/bin/bash\n")
                 f.write("cat << 'EOF' > /tmp/do_update.sh\n")
                 f.write("#!/bin/bash\n")
                 f.write("sleep 2\n")
                 f.write("pkill -f setupbot.py\n")
-                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\n")
+                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\\n")
                 f.write(f"export TELEGRAM_BOT_TOKEN='{bot_token}'\n")
                 f.write(f"export TELEGRAM_ALLOWED_USER_ID='{env['TELEGRAM_ALLOWED_USER_ID']}'\n")
                 f.write("export IS_DOCKER='1'\n")
@@ -326,7 +327,7 @@ def launch_tailscale_background():
         sock_file = os.path.join(tailscale_dir, "tailscaled.sock")
         
         # Create a helper script for the user to connect manually via Telegram Bot terminal
-        helper_script = "connect_tailnet.sh"
+        helper_script = "/root/connect_tailnet.sh"
         with open(helper_script, "w") as f:
             f.write("#!/bin/bash\n")
             f.write('if [ -z "$1" ]; then\n')
@@ -351,7 +352,7 @@ def launch_tailscale_background():
         authkey = os.environ.get("TAILSCALE_AUTHKEY", "").strip()
         if authkey:
             print("[Tailscale] Auth key found in env. Authenticating with Tailnet...")
-            subprocess.run(["./connect_tailnet.sh", authkey])
+            subprocess.run(["/root/connect_tailnet.sh", authkey])
         else:
             print("[Tailscale] No Auth key found in env. Tailscale daemon is running idle.")
             print("[Tailscale] You can connect later via bot terminal by running: ./connect_tailnet.sh <your-auth-key>")
