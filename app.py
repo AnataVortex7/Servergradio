@@ -305,23 +305,81 @@ def launch_setupbot_background():
                 print(f"[Setupbot] Could not write PID file: {e}")
             print(f"[Setupbot] Bot process started successfully! PID={proc.pid}")
             
-            # Create a helper script for the user to securely update and restart setupbot
-            update_script = "/root/update_bot.sh"
-            with open(update_script, "w") as f:
-                f.write("#!/bin/bash\n")
-                f.write("cat << 'EOF' > /tmp/do_update.sh\n")
-                f.write("#!/bin/bash\n")
-                f.write("sleep 2\n")
-                f.write("pkill -f setupbot.py\n")
-                f.write(f"curl -s -L {SETUPBOT_GIST_URL} -o {target_script}\n")
-                f.write(f"export TELEGRAM_BOT_TOKEN='{bot_token}'\n")
-                f.write(f"export TELEGRAM_ALLOWED_USER_ID='{env['TELEGRAM_ALLOWED_USER_ID']}'\n")
-                f.write("export IS_DOCKER='1'\n")
-                f.write(f"nohup {sys.executable} {target_script} --foreground > setupbot.log 2>&1 &\n")
-                f.write("EOF\n")
-                f.write("chmod +x /tmp/do_update.sh\n")
-                f.write("nohup /tmp/do_update.sh > /dev/null 2>&1 &\n")
-                f.write("echo 'Update initiated. The bot will refresh and restart in 2 seconds...'\n")
+            # Create pure-Python updater — no bash, curl, wget, pkill dependency at all
+            update_script = "/root/update_bot.py"
+            _gist = SETUPBOT_GIST_URL
+            _target = target_script
+            _token = bot_token
+            _allowed = env['TELEGRAM_ALLOWED_USER_ID']
+            _exe = sys.executable
+            update_py = f"""#!/usr/bin/env python3
+# update_bot.py — pure Python, zero external tools needed
+import os, sys, signal, time, subprocess
+import urllib.request
+
+BOT_PID_FILE      = "/root/telegram_bot.pid"
+SETUPBOT_PID_FILE = "/root/setupbot.pid"
+TARGET_SCRIPT     = {repr(_target)}
+GIST_URL          = {repr(_gist)}
+BOT_TOKEN         = {repr(_token)}
+ALLOWED_USER_ID   = {repr(_allowed)}
+PYTHON_EXE        = {repr(_exe)}
+
+def kill_pid_file(path):
+    if os.path.exists(path):
+        try:
+            pid = int(open(path).read().strip())
+            os.kill(pid, signal.SIGKILL)
+            print(f"[UpdateBot] Killed PID {{pid}} ({{path}})")
+        except ProcessLookupError:
+            print(f"[UpdateBot] Process in {{path}} already dead")
+        except Exception as e:
+            print(f"[UpdateBot] kill {{path}} error: {{e}}")
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+time.sleep(1)
+kill_pid_file(BOT_PID_FILE)
+kill_pid_file(SETUPBOT_PID_FILE)
+time.sleep(1)
+
+# Download latest setupbot.py using stdlib urllib — no curl/wget
+try:
+    req = urllib.request.Request(GIST_URL, headers={{"User-Agent": "Mozilla/5.0"}})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        new_code = r.read()
+    if len(new_code) > 1000:
+        with open(TARGET_SCRIPT, "wb") as f:
+            f.write(new_code)
+        print(f"[UpdateBot] Downloaded {{len(new_code)}} bytes → {{TARGET_SCRIPT}}")
+    else:
+        print(f"[UpdateBot] Response too small ({{len(new_code)}}B), keeping existing file")
+except Exception as e:
+    print(f"[UpdateBot] Download failed: {{e}} — starting with existing script")
+
+# Launch new setupbot.py
+if os.path.exists(TARGET_SCRIPT):
+    env = os.environ.copy()
+    env["TELEGRAM_BOT_TOKEN"]         = BOT_TOKEN
+    env["TELEGRAM_ALLOWED_USER_ID"]   = ALLOWED_USER_ID
+    env["IS_DOCKER"]                  = "1"
+    proc = subprocess.Popen([PYTHON_EXE, TARGET_SCRIPT, "--foreground"], env=env)
+    try:
+        with open(SETUPBOT_PID_FILE, "w") as pf:
+            pf.write(str(proc.pid))
+    except Exception:
+        pass
+    print(f"[UpdateBot] New setupbot started — PID {{proc.pid}}")
+else:
+    print(f"[UpdateBot] ERROR: {{TARGET_SCRIPT}} not found!")
+"""
+            with open(update_script, "w", encoding="utf-8") as f:
+                f.write(update_py)
+            import stat
+            os.chmod(update_script, stat.S_IRWXU)
+            print(f"[Setupbot] Created pure-Python updater: {update_script}")
             import stat
             os.chmod(update_script, stat.S_IRWXU)
             print(f"[Setupbot] Created update script: ./{update_script}")
@@ -369,16 +427,34 @@ def launch_tailscale_background():
         state_file = os.path.join(tailscale_dir, "tailscaled.state")
         sock_file = os.path.join(tailscale_dir, "tailscaled.sock")
         
-        # Create a helper script for the user to connect manually via Telegram Bot terminal
-        helper_script = "/root/connect_tailnet.sh"
-        with open(helper_script, "w") as f:
-            f.write("#!/bin/bash\n")
-            f.write('if [ -z "$1" ]; then\n')
-            f.write('  echo "Usage: ./connect_tailnet.sh <tailscale-auth-key>"\n')
-            f.write('  exit 1\n')
-            f.write('fi\n')
-            f.write(f'{tailscale_path} --socket={sock_file} up --authkey=$1 --hostname=gradio-server\n')
-            f.write('echo "Tailscale is now connected!"\n')
+        # Create pure-Python Tailscale connector — no bash dependency
+        helper_script = "/root/connect_tailnet.py"
+        _ts_path  = tailscale_path
+        _sock     = sock_file
+        connect_py = f"""#!/usr/bin/env python3
+# connect_tailnet.py — pure Python wrapper, no bash needed
+import sys, subprocess, os
+
+if len(sys.argv) < 2:
+    print("Usage: python3 connect_tailnet.py <tailscale-auth-key>")
+    sys.exit(1)
+
+authkey = sys.argv[1]
+ts = {repr(_ts_path)}
+sock = {repr(_sock)}
+
+result = subprocess.run(
+    [ts, f"--socket={{sock}}", "up", f"--authkey={{authkey}}", "--hostname=gradio-server"],
+    capture_output=True, text=True
+)
+if result.returncode == 0:
+    print("Tailscale is now connected!")
+else:
+    print(f"Tailscale error: {{result.stderr}}", file=sys.stderr)
+    sys.exit(result.returncode)
+"""
+        with open(helper_script, "w", encoding="utf-8") as f:
+            f.write(connect_py)
         os.chmod(helper_script, stat.S_IRWXU)
 
         print("[Tailscale] Starting tailscaled daemon in userspace mode...")
