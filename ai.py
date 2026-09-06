@@ -4,12 +4,12 @@ import subprocess
 import time
 import json
 import urllib.request
+import urllib.error
 
 # =================================================================
 # 😈 THE ULTIMATE UNCENSORED AI - DESIGNED FOR 330GB RAM / 48 CORES
 # =================================================================
 
-# The most intelligent completely uncensored 70B model
 MODEL_NAME = "dolphin-llama3:70b" 
 
 def print_banner():
@@ -21,29 +21,56 @@ def print_banner():
     print("="*60 + "\n")
 
 def setup_env():
+    # 0. Install required dependencies
+    print("[+] 1/4 Checking and installing dependencies (zstd)...")
+    os.system("apt-get update > /dev/null 2>&1")
+    os.system("apt-get install -y zstd curl > /dev/null 2>&1")
+
     # 1. Install Ollama if not present
+    print("[+] 2/4 Checking AI Engine (Ollama)...")
     if not os.path.exists("/usr/local/bin/ollama"):
-        print("[+] Installing AI Engine (Ollama)...")
+        print("    --> Installing Ollama...")
         os.system("curl -fsSL https://ollama.com/install.sh | sh")
     else:
-        print("[+] AI Engine already installed.")
+        print("    --> Ollama is already installed.")
 
     # 2. Start Ollama Server
-    print("[+] Starting background AI server...")
-    os.system("ollama serve > /dev/null 2>&1 &")
-    time.sleep(3)
+    print("[+] 3/4 Starting background AI server...")
+    os.system("OLLAMA_HOST=127.0.0.1:11434 ollama serve > /tmp/ollama.log 2>&1 &")
+    
+    # Wait for server to start
+    server_ready = False
+    for _ in range(15):
+        try:
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=2) as response:
+                if response.status == 200:
+                    server_ready = True
+                    break
+        except Exception:
+            pass
+        time.sleep(1)
+        
+    if not server_ready:
+        print("[!] ERROR: Could not start Ollama server. Check /tmp/ollama.log")
+        exit(1)
+    
+    print("    --> Server is LIVE!")
 
     # 3. Pull Model
-    print(f"\n[+] Downloading {MODEL_NAME}...")
-    print("    ⏳ (This is a 40GB+ model! It will take some time to download)")
-    os.system(f"ollama pull {MODEL_NAME}")
+    print(f"\n[+] 4/4 Downloading {MODEL_NAME}...")
+    print("    ⏳ (This is a 40GB+ model! Wait for it to hit 100%)")
+    # Using os.system so the user can see the progress bar directly in the terminal
+    result = os.system(f"ollama pull {MODEL_NAME}")
+    if result != 0:
+        print("[!] ERROR: Failed to download the model. Are you out of disk space or internet disconnected?")
+        exit(1)
     
 def chat_loop():
     print("\n" + "="*60)
     print(" 😈 AI IS READY! TYPE 'exit' TO QUIT.")
     print("="*60)
     
-    # Keep history for context
     history = []
     
     while True:
@@ -85,12 +112,17 @@ def chat_loop():
                 print("\n")
                 history.append({"role": "assistant", "content": full_response})
                 
-                # Keep history short to prevent lag
                 if len(history) > 10:
                     history = history[-10:]
                     
+            except urllib.error.HTTPError as e:
+                print(f"\n[ERROR]: HTTP Error {e.code} - {e.reason}")
+                error_body = e.read().decode('utf-8')
+                print(f"Details: {error_body}")
+                history.pop() # Remove failed message
             except Exception as e:
                 print(f"\n[ERROR]: Failed to generate response -> {e}")
+                history.pop()
                 
         except KeyboardInterrupt:
             print("\n[+] Exiting...")
